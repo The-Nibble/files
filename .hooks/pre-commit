@@ -65,6 +65,8 @@ class ImageHook:
                 subprocess.run(
                     ['git', 'rm', '--cached', file_path], check=True)
                 Path(file_path).unlink()
+                self.allowed_files.append(FileValidation(
+                    new_path, FileStatus.ALLOWED, 'Converted to jpg'))
             except Exception as e:
                 print(f"Error converting {file_path} to JPG: {str(e)}")
 
