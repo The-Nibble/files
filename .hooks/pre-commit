@@ -1,0 +1,129 @@
+#!/usr/bin/env python3
+
+import os
+import sys
+import subprocess
+from typing import List, Set, Tuple
+from pathlib import Path
+from dataclasses import dataclass
+from enum import Enum
+
+
+class Color:
+    """ANSI color codes for terminal output"""
+    RED = '\033[91m'
+    GREEN = '\033[92m'
+    YELLOW = '\033[93m'
+    RESET = '\033[0m'
+
+
+class FileStatus(Enum):
+    """Enum for file validation status"""
+    ALLOWED = "allowed"
+    BLOCKED = "blocked"
+    IGNORED = "ignored"
+
+
+@dataclass
+class FileValidation:
+    """Data class to store file validation results"""
+    path: str
+    status: FileStatus
+    message: str
+
+
+class ImageHook:
+    """Pre-commit hook for managing image file extensions"""
+
+    # Remove or comment out old extension sets:
+    # BLOCKED_EXTENSIONS: Set[str] = set()
+    # ALLOWED_PATTERNS: List[Tuple[str, List[str]]] = [...]
+    # RESTRICTED_EXTENSIONS: Set[str] = {...}
+    # RESTRICTED_DIRS: List[str] = [...]
+
+    def __init__(self):
+        self.violations: List[FileValidation] = []
+        self.allowed_files: List[FileValidation] = []
+
+    def get_staged_files(self) -> List[str]:
+        """Get list of staged files from git"""
+        try:
+            result = subprocess.run(
+                ['git', 'diff', '--cached', '--name-only', '--diff-filter=ACMR'],
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            return [file for file in result.stdout.splitlines() if file.strip()]
+        except subprocess.CalledProcessError as e:
+            print(f"{Color.RED}Error getting staged files: {e}{Color.RESET}")
+            sys.exit(1)
+
+    def validate_file(self, file_path: str) -> FileValidation:
+        extension = Path(file_path).suffix.lower().lstrip('.')
+        image_exts = {"jpg", "png", "gif", "bmp",
+                      "jpeg", "webp", "svg", "ico", "tiff", "avif"}
+        # Ignore non-image files
+        if extension not in image_exts:
+            return FileValidation(file_path, FileStatus.IGNORED, "Not an image file")
+
+        # Allow only .jpg in /wallpapers or /covers
+        if any(file_path.startswith(d) for d in ["wallpapers/", "covers/"]):
+            if extension != "jpg":
+                return FileValidation(file_path, FileStatus.BLOCKED, f"Only .jpg allowed here, found .{extension}")
+            return FileValidation(file_path, FileStatus.ALLOWED, "Allowed .jpg in restricted folder")
+
+        # No restrictions elsewhere
+        return FileValidation(file_path, FileStatus.ALLOWED, "No restrictions")
+
+    def print_results(self):
+        """Print validation results with color formatting"""
+        # Print blocked files first
+        for violation in self.violations:
+            print(f"{Color.RED}✖ {violation.message}: {
+                  violation.path}{Color.RESET}")
+
+        # Print allowed files
+        for allowed in self.allowed_files:
+            print(f"{Color.GREEN}✓ {allowed.message}: {
+                  allowed.path}{Color.RESET}")
+
+        # Print summary if there were violations
+        if self.violations:
+            print(f"\n{Color.RED}✖ Commit failed: Found {
+                  len(self.violations)} illegal image file(s){Color.RESET}")
+            print(
+                f"{Color.YELLOW}Note: Only .jpg files are allowed in /wallpapers and /covers directories{Color.RESET}")
+
+    def run(self) -> bool:
+        """Run the hook validation"""
+        staged_files = self.get_staged_files()
+
+        for file_path in staged_files:
+            validation = self.validate_file(file_path)
+
+            if validation.status == FileStatus.BLOCKED:
+                self.violations.append(validation)
+            elif validation.status == FileStatus.ALLOWED:
+                self.allowed_files.append(validation)
+
+        self.print_results()
+        return len(self.violations) == 0
+
+
+def main():
+    """Main entry point"""
+    try:
+        hook = ImageHook()
+        success = hook.run()
+        sys.exit(0 if success else 1)
+    except KeyboardInterrupt:
+        print(f"\n{Color.YELLOW}Hook interrupted by user{Color.RESET}")
+        sys.exit(1)
+    except Exception as e:
+        print(f"{Color.RED}Error running hook: {str(e)}{Color.RESET}")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
