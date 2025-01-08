@@ -7,6 +7,7 @@ from typing import List, Set, Tuple
 from pathlib import Path
 from dataclasses import dataclass
 from enum import Enum
+from PIL import Image
 
 
 class Color:
@@ -35,12 +36,6 @@ class FileValidation:
 class ImageHook:
     """Pre-commit hook for managing image file extensions"""
 
-    # Remove or comment out old extension sets:
-    # BLOCKED_EXTENSIONS: Set[str] = set()
-    # ALLOWED_PATTERNS: List[Tuple[str, List[str]]] = [...]
-    # RESTRICTED_EXTENSIONS: Set[str] = {...}
-    # RESTRICTED_DIRS: List[str] = [...]
-
     def __init__(self):
         self.violations: List[FileValidation] = []
         self.allowed_files: List[FileValidation] = []
@@ -59,22 +54,33 @@ class ImageHook:
             print(f"{Color.RED}Error getting staged files: {e}{Color.RESET}")
             sys.exit(1)
 
+    def convert_to_jpg(self, file_path: str):
+        extension = Path(file_path).suffix.lower().lstrip('.')
+        if extension != 'jpg':
+            new_path = str(Path(file_path).with_suffix('.jpg'))
+            try:
+                img = Image.open(file_path).convert('RGB')
+                img.save(new_path, 'JPEG')
+                subprocess.run(['git', 'add', new_path], check=True)
+                subprocess.run(
+                    ['git', 'rm', '--cached', file_path], check=True)
+                Path(file_path).unlink()
+                self.allowed_files.append(FileValidation(
+                    new_path, FileStatus.ALLOWED, 'Converted to jpg'))
+            except Exception as e:
+                print(f"Error converting {file_path} to JPG: {str(e)}")
+
     def validate_file(self, file_path: str) -> FileValidation:
         extension = Path(file_path).suffix.lower().lstrip('.')
         image_exts = {"jpg", "png", "gif", "bmp",
                       "jpeg", "webp", "svg", "ico", "tiff", "avif"}
-        # Ignore non-image files
         if extension not in image_exts:
             return FileValidation(file_path, FileStatus.IGNORED, "Not an image file")
-
-        # Allow only .jpg in /wallpapers or /covers
-        if any(file_path.startswith(d) for d in ["wallpapers/", "covers/"]):
+        if file_path.startswith("wallpapers/") or file_path.startswith("covers/"):
             if extension != "jpg":
-                return FileValidation(file_path, FileStatus.BLOCKED, f"Only .jpg allowed here, found .{extension}")
-            return FileValidation(file_path, FileStatus.ALLOWED, "Allowed .jpg in restricted folder")
-
-        # No restrictions elsewhere
-        return FileValidation(file_path, FileStatus.ALLOWED, "No restrictions")
+                return FileValidation(file_path, FileStatus.ALLOWED, "Convert non-jpg in wallpapers/covers")
+            return FileValidation(file_path, FileStatus.IGNORED, "Already .jpg in wallpapers/covers")
+        return FileValidation(file_path, FileStatus.IGNORED, "Outside wallpapers/covers")
 
     def print_results(self):
         """Print validation results with color formatting"""
@@ -102,13 +108,10 @@ class ImageHook:
         for file_path in staged_files:
             validation = self.validate_file(file_path)
 
-            if validation.status == FileStatus.BLOCKED:
-                self.violations.append(validation)
-            elif validation.status == FileStatus.ALLOWED:
-                self.allowed_files.append(validation)
+            if validation.status == FileStatus.ALLOWED:
+                self.convert_to_jpg(file_path)
 
-        self.print_results()
-        return len(self.violations) == 0
+        return True
 
 
 def main():
