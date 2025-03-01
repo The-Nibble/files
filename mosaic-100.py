@@ -1,9 +1,9 @@
 import os
 import cv2
 import numpy as np
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
-def create_mosaic(image_dir, output_path, canvas_size=(1000, 500), grid_size=(20, 10), blur_strength=10):
+def create_mosaic(image_dir, output_path, canvas_size=(2000, 1000), grid_size=(40, 20), blur_strength=10):
     images = [os.path.join(image_dir, img) for img in os.listdir(image_dir) if img.endswith(('jpg'))]
     
     print(f"Found {len(images)} images in directory {image_dir}")
@@ -85,8 +85,17 @@ def create_mosaic(image_dir, output_path, canvas_size=(1000, 500), grid_size=(20
     # Draw the "100" text
     mask_draw.text((text_x, text_y), text, fill=255, font=font)
     
+    # Create a border around the "100" to make it more distinct
+    border_mask = mask.filter(ImageFilter.MaxFilter(size=15))  # Apply dilation to create border
+    final_mask = Image.new('L', canvas_size, 0)
+    
+    # Combine masks - original mask with high intensity, border with medium intensity
+    final_mask_np = np.array(mask) * 0.9 + np.array(border_mask) * 0.7
+    final_mask_np = np.clip(final_mask_np, 0, 255).astype(np.uint8)
+    final_mask = Image.fromarray(final_mask_np)
+    
     # Save mask for debugging
-    mask.save("debug_mask.png")
+    final_mask.save("debug_mask.png")
     print("Saved mask image for debugging as debug_mask.png")
     
     # Create a blurred version of the canvas
@@ -95,15 +104,18 @@ def create_mosaic(image_dir, output_path, canvas_size=(1000, 500), grid_size=(20
     blurred_canvas = Image.fromarray(blurred_canvas_np)
     
     # Create final image by combining original and blurred versions using the mask
-    mask_np = np.array(mask) / 255.0
-    mask_np = np.stack([mask_np, mask_np, mask_np], axis=2)  # Expand to 3 channels
+    final_mask_np = np.array(final_mask) / 255.0
+    final_mask_np = np.stack([final_mask_np, final_mask_np, final_mask_np], axis=2)  # Expand to 3 channels
     
-    combined_np = mask_np * np.array(canvas) + (1 - mask_np) * np.array(blurred_canvas)
+    combined_np = final_mask_np * np.array(canvas) + (1 - final_mask_np) * np.array(blurred_canvas)
     final_canvas = Image.fromarray(combined_np.astype(np.uint8))
     
+    # Add a subtle edge enhancement to make the transition more distinct
+    final_canvas = final_canvas.filter(ImageFilter.EDGE_ENHANCE)
+    
     # Save the final mosaic
-    final_canvas.save(output_path)
-    print(f"Mosaic saved as {output_path}")
+    final_canvas.save(output_path, quality=95)  # Higher JPEG quality
+    print(f"High-quality mosaic saved as {output_path}")
 
 # Usage
 create_mosaic('covers', '100.jpg')
